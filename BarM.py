@@ -90,8 +90,9 @@ def create_multipage_pdf(df):
         for col_name in df_wastage.columns:
             pdf.cell(wastage_col_widths[col_name], 10, sanitize_text(row[col_name]), border=1, align='C')
         pdf.ln()
-
-    return pdf.output()
+    
+    # This is the corrected line:
+    return pdf.output().encode('latin-1')
 
 
 # --- Core Calculation Functions ---
@@ -99,7 +100,9 @@ def numof(length, spacing, cover):
     """Calculates number of bars based on length, spacing, and cover."""
     if spacing == 0:
         return 0
-    return math.ceil((length - cover) / spacing) - 2
+    # Ensure result is not negative
+    calculated_units = math.ceil((length - cover) / spacing) - 2
+    return max(0, calculated_units)
 
 def bars_and_offcuts(cut_length, bar_size, num_cuts_needed):
     """Calculates bars required and returns a detailed list of all offcuts."""
