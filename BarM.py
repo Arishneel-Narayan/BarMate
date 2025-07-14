@@ -95,6 +95,42 @@ def create_multipage_pdf(df):
 
 
 # --- Core Calculation Functions ---
+def tonnage(Number_bars, diameter_mm, Length_m):
+    Bar_per_tonne = { "6m": {10: 270, 12: 188, 16: 106, 20: 68, 25: 43, 32: 26}, "7.5m": {10: 216, 12: 150, 16: 85, 20: 54, 25: 35, 32: 21}, "9m": {10: 180, 12: 125, 16: 70, 20: 45, 25: 29, 32: 18}, "12m": {10: 135, 12: 94, 16: 53, 20: 34, 25: 22, 32: 13}}
+    try: return Number_bars / Bar_per_tonne[Length_m][diameter_mm]
+    except KeyError: return None
+
+def bars_lengths(tonnage_val, Length_m, diameter):
+    Bar_per_tonne = { "6m": {10: 270, 12: 188, 16: 106, 20: 68, 25: 43, 32: 26}, "7.5m": {10: 216, 12: 150, 16: 85, 20: 54, 25: 35, 32: 21}, "9m": {10: 180, 12: 125, 16: 70, 20: 45, 25: 29, 32: 18}, "12m": {10: 135, 12: 94, 16: 53, 20: 34, 25: 22, 32: 13}}
+    try: return tonnage_val * Bar_per_tonne[Length_m][diameter]
+    except KeyError: return None
+
+def stirrup_cutting_length(Perimeter, bar_diameter):
+    hook_length = 2 * (10 * bar_diameter)
+    bend_deduction = (3 * 2 * bar_diameter) + (2 * 3 * bar_diameter)
+    return Perimeter + hook_length - bend_deduction
+
+def p_square(length): return 4 * length
+def p_rectangle(length, width): return 2 * (length + width)
+def p_circle(diameter): return math.pi * diameter
+
+def Lapped_bars(standard_length, diameter, lapping_distance):
+    lap_length = 60 * diameter
+    bar_less_lap = standard_length - lap_length
+    if bar_less_lap <= 0: return "Lapping not possible. Standard length is too short.", ""
+    
+    bar_by_2_span = bar_less_lap * 2 + lap_length
+    bars_double_lap = math.floor(lapping_distance / bar_by_2_span)
+    length_left = lapping_distance - bars_double_lap * bar_by_2_span
+    number_of_bars = 2 * bars_double_lap
+    
+    if length_left >= standard_length:
+        length_left -= standard_length
+        number_of_bars += 2
+        return f"{number_of_bars} bars used", f"{length_left} mm left at end"
+    else:
+        return f"{number_of_bars} bars used", f"{length_left} mm left after lapping"
+
 def numof(length, spacing, cover):
     if spacing <= 0: return 0
     calculated_units = math.ceil((length - cover) / spacing) - 2
@@ -180,47 +216,26 @@ def bbs_generator():
                 lengths_str = st.text_input("Lengths (comma-separated, in mm)", "200,1000,200")
                 bends_90 = st.number_input("Number of 90° Bends", 0, value=2)
                 preferred_length = st.selectbox("Stock Bar Length", ["Optimal", "6m", "7.5m", "9m", "12m"], 0, help="Select 'Optimal' to find the most material-efficient stock length.")
-            
             st.markdown("---")
             st.write("**Specify Quantity**")
-            
-            # --- CORRECTED UI: Both methods are always visible ---
-            # Method 1: Direct Entry (acts as an override)
-            unit_number_direct = st.number_input(
-                "Enter Number of Units Directly", 
-                min_value=0, 
-                value=0, 
-                help="If this is > 0, it will be used. Otherwise, the calculation below is used."
-            )
-
+            unit_number_direct = st.number_input("Enter Number of Units Directly", 0, value=0, help="If this is > 0, it overrides the calculation below.")
             st.divider()
-            
-            # Method 2: Calculation for Stirrups/Ties
             st.write("Or, Calculate for Stirrups/Ties")
             c3, c4, c5 = st.columns(3)
             total_length_m = c3.number_input("Length of Zone to Cover (m)", 0.1, value=10.0)
             spacing_mm = c4.number_input("Stirrup Spacing (c/c, mm)", 1, value=200)
             cover_mm = c5.number_input("Concrete Cover at ends (mm)", 0, value=75)
-
             if st.form_submit_button("➕ Add Bar to Schedule"):
-                if st.session_state.schedule_df_list:
-                    if barmark in [item.iloc[0]['Barmark'] for item in st.session_state.schedule_df_list]:
-                        st.warning(f"⚠️ Warning: Bar Mark '{barmark}' already exists in the schedule.")
-                
-                # Override Logic: Use direct entry if it's > 0
-                if unit_number_direct > 0:
-                    unit_number = unit_number_direct
-                else:
-                    unit_number = numof(total_length_m * 1000, spacing_mm, cover_mm)
-                    st.info(f"Using calculated Number of Bars: {unit_number}")
-                
+                if st.session_state.schedule_df_list and barmark in [item.iloc[0]['Barmark'] for item in st.session_state.schedule_df_list]:
+                    st.warning(f"⚠️ Warning: Bar Mark '{barmark}' already exists in the schedule.")
+                unit_number = unit_number_direct if unit_number_direct > 0 else numof(total_length_m * 1000, spacing_mm, cover_mm)
+                if unit_number_direct <= 0: st.info(f"Using calculated Number of Bars: {unit_number}")
                 try:
                     new_bar_df = bm(barmark, [int(l.strip()) for l in lengths_str.split(',')], type_rebar, diameter, bends_90, unit_number, location, preferred_length)
                     if new_bar_df is not None:
                         st.session_state.schedule_df_list.append(new_bar_df)
                         st.success(f"Bar Mark '{barmark}' added!")
-                except ValueError: 
-                    st.error("Please enter valid, comma-separated numbers for lengths.")
+                except ValueError: st.error("Please enter valid, comma-separated numbers for lengths.")
 
     if st.session_state.schedule_df_list:
         with st.expander("Step 2: View Schedule, Analyze, and Download", expanded=True):
@@ -228,7 +243,6 @@ def bbs_generator():
             full_schedule_df = pd.concat(st.session_state.schedule_df_list, ignore_index=True)
             st.dataframe(full_schedule_df)
             st.markdown("---")
-            
             col1, col2 = st.columns(2)
             with col1:
                 pdf_bytes = create_multipage_pdf(full_schedule_df)
@@ -244,7 +258,6 @@ def bbs_generator():
                             st.session_state.schedule_df_list.pop(index_to_remove)
                             st.success(f"Deleted Bar Mark '{selected_barmark}'.")
                             st.rerun()
-            
             st.markdown("---")
             st.subheader("📉 Scenario Analysis")
             if st.button("Compare with 6m-Only Stock"):
@@ -263,26 +276,76 @@ def bbs_generator():
 def standalone_calculators():
     st.header("Standalone Rebar Calculators")
     st.info("This section contains individual tools for quick calculations.")
-    tab1, tab2 = st.tabs(["Cut Length", "Optimal Bar Size"])
+    
+    tab_titles = ["Cut Length", "Optimal Bar Size", "Tonnage <> Bar Count", "Stirrup Tools", "Lapping Calculator"]
+    tab1, tab2, tab3, tab4, tab5 = st.tabs(tab_titles)
+
     with tab1:
         st.subheader("Rebar Cut Length Calculator")
         lengths_cl_str, diam_cl = st.text_input("Lengths (comma-separated, in mm)", "250,1500,250", key="cl_len"), st.selectbox("Diameter (mm)", [10, 12, 16, 20, 25, 32], key="cl_diam")
         bends_cl = st.number_input("Number of 90° Bends", 0, value=2, key="cl_bends")
-        if st.button("Calculate Cut Length"):
+        if st.button("Calculate Cut Length", key="cl_btn"):
             try:
                 result_cl = Cutlength([int(l.strip()) for l in lengths_cl_str.split(',')], diam_cl, bends_cl)
                 st.metric("Final Cut Length", f"{result_cl} mm")
             except ValueError: st.error("Please enter valid, comma-separated numbers for lengths.")
+
     with tab2:
         st.subheader("Optimal Bar Size Calculator")
         cut_len_opt, num_cuts_opt = st.number_input("Required Cut Length (m)", 0.1, value=2.8), st.number_input("Number of Cuts Needed", 1, value=50)
-        if st.button("Find Optimal Size"):
+        if st.button("Find Optimal Size", key="opt_btn"):
             result = optimal_bar_size(cut_len_opt, num_cuts_opt)
             if 'optimal_size' in result:
                 st.metric("Optimal Stock Bar Size", f"{result['optimal_size']} m")
                 st.metric("Number of Stock Bars Required", f"{result['bars_required']} bars")
                 st.metric("Total Wastage", f"{result['wastage']:.2f} m")
             else: st.error("Could not determine optimal size.")
+
+    with tab3:
+        st.subheader("Tonnage & Bar Count Converter")
+        diam_t = st.selectbox("Diameter (mm)", [10, 12, 16, 20, 25, 32], key="t_diam")
+        len_m = st.selectbox("Standard Length", ["6m", "7.5m", "9m", "12m"], key="t_len")
+        conv_type = st.radio("Conversion Type", ["Bars to Tonnage", "Tonnage to Bars"])
+        if conv_type == "Bars to Tonnage":
+            num_bars = st.number_input("Number of Bars", 1, value=100)
+            if st.button("Calculate Tonnage", key="ton_btn"):
+                result = tonnage(num_bars, diam_t, len_m)
+                if result is not None: st.metric("Calculated Tonnage", f"{result:.3f} tonnes")
+        else:
+            tonnage_val = st.number_input("Tonnage", 0.1, value=1.0, step=0.1)
+            if st.button("Calculate Number of Bars", key="bar_btn"):
+                result = bars_lengths(tonnage_val, len_m, diam_t)
+                if result is not None: st.metric("Calculated Number of Bars", f"{math.ceil(result)} bars")
+
+    with tab4:
+        st.subheader("Stirrup Quantity Calculator")
+        len_q, space_q, cover_q = st.number_input("Length of Zone (mm)", value=5000), st.number_input("Spacing (mm)", value=200), st.number_input("Cover (mm)", value=75)
+        if st.button("Calculate Quantity", key="qty_btn"):
+            st.metric("Number of Stirrups", numof(len_q, space_q, cover_q))
+        st.divider()
+        st.subheader("Stirrup Cutting Length Calculator")
+        shape = st.selectbox("Stirrup Shape", ["Rectangle", "Square", "Circle"])
+        if shape == "Rectangle":
+            l, w = st.number_input("Length (mm)", value=400), st.number_input("Width (mm)", value=300)
+            perimeter = p_rectangle(l, w)
+        elif shape == "Square":
+            l_sq = st.number_input("Side Length (mm)", value=300)
+            perimeter = p_square(l_sq)
+        else:
+            d_circ = st.number_input("Diameter (mm)", value=500)
+            perimeter = p_circle(d_circ)
+        diam_st = st.selectbox("Bar Diameter (mm)", [10, 12, 16], key="st_diam")
+        if st.button("Calculate Stirrup Cut Length", key="st_len_btn"):
+            st.metric("Stirrup Cut Length", f"{stirrup_cutting_length(perimeter, diam_st):.2f} mm")
+
+    with tab5:
+        st.subheader("Lapping Bar Calculator")
+        lap_len_std = st.number_input("Standard Bar Length (mm)", value=12000)
+        lap_diam = st.selectbox("Bar Diameter (mm)", [10, 12, 16, 20, 25, 32], index=2)
+        lap_dist = st.number_input("Total Distance to Span (mm)", value=30000)
+        if st.button("Calculate Lapping", key="lap_btn"):
+            num, left = Lapped_bars(lap_len_std, lap_diam, lap_dist)
+            st.success(f"**Result:** {num}, with {left}")
 
 def main():
     st.set_page_config(page_title="Rebar Optimization Suite", layout="wide", initial_sidebar_state="expanded")
