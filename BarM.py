@@ -96,60 +96,45 @@ def create_multipage_pdf(df):
 
 # --- Core Calculation Functions ---
 def numof(length, spacing, cover):
-    """Calculates number of stirrups/ties based on length, spacing, and cover."""
-    if spacing <= 0:
-        return 0
+    if spacing <= 0: return 0
     calculated_units = math.ceil((length - cover) / spacing) - 2
     return max(0, calculated_units)
 
 def bars_and_offcuts(cut_length, bar_size, num_cuts_needed):
-    """Calculates bars required and returns a detailed list of all offcuts."""
     if cut_length <= 0: return {"Error": "Cut length must be positive."}
     if cut_length > bar_size: return {"Error": f"Cut length ({cut_length}m) is greater than stock bar size ({bar_size}m)."}
-    
     cuts_per_bar = int(bar_size // cut_length)
     if cuts_per_bar == 0: return {"Error": "Cannot get any cuts from the selected bar size."}
-
     num_full_bars, remaining_cuts = divmod(num_cuts_needed, cuts_per_bar)
     offcuts = []
     offcut_from_full_bar = bar_size - (cuts_per_bar * cut_length)
     offcuts.extend([offcut_from_full_bar] * num_full_bars)
-    
     bars_used = num_full_bars
     if remaining_cuts > 0:
         bars_used += 1
         offcut_from_last_bar = bar_size - (remaining_cuts * cut_length)
         offcuts.append(offcut_from_last_bar)
-        
     return {"bars_used": bars_used, "offcuts": offcuts, "total_wastage": round(sum(offcuts), 3)}
 
 def optimal_bar_size(cut_length, num_cuts_needed):
-    """Finds the standard bar size that minimizes total offcut wastage."""
     standard_bar_sizes = [6.0, 7.5, 9.0, 12.0]
     best_option = {'wastage': float('inf')}
-
     if cut_length > max(standard_bar_sizes):
         result = bars_and_offcuts(cut_length, 12.0, num_cuts_needed)
         return {'optimal_size': 12.0, 'bars_required': result['bars_used'], 'wastage': result['total_wastage']}
-    
     for bar in standard_bar_sizes:
         if bar < cut_length: continue
-        
         result = bars_and_offcuts(cut_length, bar, num_cuts_needed)
         if "Error" not in result and result['total_wastage'] < best_option['wastage']:
             best_option = {'optimal_size': bar, 'bars_required': result['bars_used'], 'wastage': result['total_wastage']}
-            
     return best_option
 
 def bm(Barmark, Lengths, Type, Diameter, bends_90, Unit_number, Location, Preferred_Length):
-    """Creates a DataFrame for a single Bar Mark, including wastage."""
     CutL_mm = Cutlength(Lengths, Diameter, bends_90)
     CutL_m = round(CutL_mm / 1000, 3)
-    
     if Unit_number <= 0:
         st.warning(f"Number of units for Barmark '{Barmark}' is zero or less. Skipping calculation.")
         return None
-
     if Preferred_Length == "Optimal":
         optimal_result = optimal_bar_size(CutL_m, Unit_number)
         if 'optimal_size' not in optimal_result:
@@ -163,18 +148,10 @@ def bm(Barmark, Lengths, Type, Diameter, bends_90, Unit_number, Location, Prefer
             st.error(bar_info["Error"])
             return None
         Preferred_Length_used, wastage = bar_info["bars_used"], bar_info["total_wastage"]
-
-    My_Bar = {
-        "Barmark": [Barmark], "Grade": [f"{Type}{Diameter}"], "Location": [Location], 
-        "Cut Length (m)": [CutL_m], "Number of Units": [Unit_number], 
-        "Stock Length (m)": [Pref_L], "Num Stock Bars": [Preferred_Length_used],
-        "Wastage (m)": [wastage], "Lengths (mm)": [str(Lengths)]
-    }
-    
+    My_Bar = {"Barmark": [Barmark], "Grade": [f"{Type}{Diameter}"], "Location": [Location], "Cut Length (m)": [CutL_m], "Number of Units": [Unit_number], "Stock Length (m)": [Pref_L], "Num Stock Bars": [Preferred_Length_used], "Wastage (m)": [wastage], "Lengths (mm)": [str(Lengths)]}
     return pd.DataFrame(My_Bar)
 
 def recalculate_with_fixed_length(df, fixed_length=6.0):
-    """Recalculates an entire schedule using a single fixed stock length."""
     df_copy = df.copy()
     for index, row in df_copy.iterrows():
         cut_length, num_units = row['Cut Length (m)'], row['Number of Units']
@@ -186,14 +163,12 @@ def recalculate_with_fixed_length(df, fixed_length=6.0):
     return df_copy
 
 def Cutlength(lengths, diameter, number_90_bends):
-    """Calculates the cut length considering bend deductions. All measurements in mm."""
     sum_lengths = sum(lengths)
     Bend_deductions = {10: 20, 12: 24, 16: 32, 18: 36, 20: 40, 25: 50, 32: 64}
     return sum_lengths - (Bend_deductions.get(diameter, 0) * number_90_bends)
 
 # --- STREAMLIT UI ---
 def bbs_generator():
-    """Renders the UI for the Bar Bending Schedule generator."""
     st.header("Bar Bending Schedule (BBS) Generator")
     with st.expander("Step 1: Add Bar Mark to Schedule", expanded=True):
         with st.form("barmark_form"):
@@ -207,9 +182,14 @@ def bbs_generator():
                 preferred_length = st.selectbox("Stock Bar Length", ["Optimal", "6m", "7.5m", "9m", "12m"], 0, help="Select 'Optimal' to find the most material-efficient stock length.")
             
             st.markdown("---")
-            # Corrected UI for specifying unit quantity
-            unit_input_method = st.radio("How to specify quantity?", ("Directly Enter Number", "Calculate for Stirrups/Ties"), horizontal=True, label_visibility="collapsed")
+            unit_input_method = st.radio("How to specify quantity?", ("Directly Enter Number", "Calculate for Stirrups/Ties"), horizontal=True)
             
+            # Use variables to hold the input values
+            unit_number_direct = None
+            total_length_m = None
+            spacing_mm = None
+            cover_mm = None
+
             if unit_input_method == "Directly Enter Number":
                 unit_number_direct = st.number_input("Number of Units", 1, value=10)
             else: # "Calculate for Stirrups/Ties"
@@ -307,7 +287,7 @@ def main():
     if 'schedule_df_list' not in st.session_state: st.session_state.schedule_df_list = []
     
     st.sidebar.title("Navigation")
-    app_mode = st.sidebar.radio("Choose a Tool", ["BBS Generator", "Standalone Calculators"], label_visibility="collapsed")
+    app_mode = st.sidebar.radio("Choose a Tool", ["BBS Generator", "Standalone Calculators"])
     st.sidebar.markdown("---")
     
     st.sidebar.title("Actions")
