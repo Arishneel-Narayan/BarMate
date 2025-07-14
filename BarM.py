@@ -91,8 +91,8 @@ def create_multipage_pdf(df):
             pdf.cell(wastage_col_widths[col_name], 10, sanitize_text(row[col_name]), border=1, align='C')
         pdf.ln()
     
-    # Corrected Line: pdf.output() returns bytes directly. No .encode() needed.
-    return pdf.output()
+    # Corrected Line: Explicitly convert bytearray from pdf.output() to bytes
+    return bytes(pdf.output())
 
 
 # --- Core Calculation Functions ---
