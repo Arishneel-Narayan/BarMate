@@ -96,204 +96,138 @@ def create_multipage_pdf(df):
 
 # --- Core Calculation Functions ---
 def numof(length, spacing, cover):
-    """Calculates number of bars based on length, spacing, and cover."""
-    if spacing <= 0:
-        return 0
+    if spacing <= 0: return 0
     calculated_units = math.ceil((length - cover) / spacing) - 2
     return max(0, calculated_units)
 
 def bars_and_offcuts(cut_length, bar_size, num_cuts_needed):
-    """Calculates bars required and returns a detailed list of all offcuts."""
     if cut_length <= 0: return {"Error": "Cut length must be positive."}
     if cut_length > bar_size: return {"Error": f"Cut length ({cut_length}m) is greater than stock bar size ({bar_size}m)."}
-    
     cuts_per_bar = int(bar_size // cut_length)
     if cuts_per_bar == 0: return {"Error": "Cannot get any cuts from the selected bar size."}
-
-    num_full_bars = num_cuts_needed // cuts_per_bar
-    remaining_cuts = num_cuts_needed % cuts_per_bar
-    
+    num_full_bars, remaining_cuts = divmod(num_cuts_needed, cuts_per_bar)
     offcuts = []
     offcut_from_full_bar = bar_size - (cuts_per_bar * cut_length)
-    for _ in range(num_full_bars):
-        offcuts.append(offcut_from_full_bar)
-        
+    offcuts.extend([offcut_from_full_bar] * num_full_bars)
     bars_used = num_full_bars
     if remaining_cuts > 0:
         bars_used += 1
         offcut_from_last_bar = bar_size - (remaining_cuts * cut_length)
         offcuts.append(offcut_from_last_bar)
-        
-    total_wastage = sum(offcuts)
-    return {"bars_used": bars_used, "offcuts": offcuts, "total_wastage": round(total_wastage, 3)}
+    return {"bars_used": bars_used, "offcuts": offcuts, "total_wastage": round(sum(offcuts), 3)}
 
 def optimal_bar_size(cut_length, num_cuts_needed):
-    """Finds the standard bar size that minimizes total offcut wastage."""
     standard_bar_sizes = [6.0, 7.5, 9.0, 12.0]
     best_option = {'wastage': float('inf')}
-
     if cut_length > max(standard_bar_sizes):
         result = bars_and_offcuts(cut_length, 12.0, num_cuts_needed)
         return {'optimal_size': 12.0, 'bars_required': result['bars_used'], 'wastage': result['total_wastage']}
-    
     for bar in standard_bar_sizes:
         if bar < cut_length: continue
-        
         result = bars_and_offcuts(cut_length, bar, num_cuts_needed)
         if "Error" not in result and result['total_wastage'] < best_option['wastage']:
             best_option = {'optimal_size': bar, 'bars_required': result['bars_used'], 'wastage': result['total_wastage']}
-            
     return best_option
 
 def bm(Barmark, Lengths, Type, Diameter, bends_90, Unit_number, Location, Preferred_Length):
-    """Creates a DataFrame for a single Bar Mark, including wastage."""
     CutL_mm = Cutlength(Lengths, Diameter, bends_90)
     CutL_m = round(CutL_mm / 1000, 3)
-    wastage = 0
-    
     if Unit_number <= 0:
         st.warning(f"Number of units for Barmark '{Barmark}' is zero or less. Skipping calculation.")
         return None
-
     if Preferred_Length == "Optimal":
         optimal_result = optimal_bar_size(CutL_m, Unit_number)
         if 'optimal_size' not in optimal_result:
             st.error(f"Could not find an optimal bar for cut length {CutL_m}m.")
             return None
-        Pref_L = optimal_result['optimal_size']
-        Preferred_Length_used = optimal_result['bars_required']
-        wastage = optimal_result['wastage']
+        Pref_L, Preferred_Length_used, wastage = optimal_result.values()
     else:
         Pref_L = float(Preferred_Length.replace('m', ''))
         bar_info = bars_and_offcuts(CutL_m, Pref_L, Unit_number)
         if "Error" in bar_info:
             st.error(bar_info["Error"])
             return None
-        Preferred_Length_used = bar_info["bars_used"]
-        wastage = bar_info["total_wastage"]
-
-    My_Bar = {
-        "Barmark": [Barmark], "Grade": [f"{Type}{Diameter}"], "Location": [Location], 
-        "Cut Length (m)": [CutL_m], "Number of Units": [Unit_number], 
-        "Stock Length (m)": [Pref_L], "Num Stock Bars": [Preferred_Length_used],
-        "Wastage (m)": [wastage], "Lengths (mm)": [str(Lengths)]
-    }
-    
+        Preferred_Length_used, wastage = bar_info["bars_used"], bar_info["total_wastage"]
+    My_Bar = {"Barmark": [Barmark], "Grade": [f"{Type}{Diameter}"], "Location": [Location], "Cut Length (m)": [CutL_m], "Number of Units": [Unit_number], "Stock Length (m)": [Pref_L], "Num Stock Bars": [Preferred_Length_used], "Wastage (m)": [wastage], "Lengths (mm)": [str(Lengths)]}
     return pd.DataFrame(My_Bar)
 
 def recalculate_with_fixed_length(df, fixed_length=6.0):
-    """Recalculates an entire schedule using a single fixed stock length."""
     df_copy = df.copy()
     for index, row in df_copy.iterrows():
-        cut_length = row['Cut Length (m)']
-        num_units = row['Number of Units']
-        
+        cut_length, num_units = row['Cut Length (m)'], row['Number of Units']
         result = bars_and_offcuts(cut_length, fixed_length, num_units)
-        
         if "Error" not in result:
-            df_copy.loc[index, 'Stock Length (m)'] = fixed_length
-            df_copy.loc[index, 'Num Stock Bars'] = result['bars_used']
-            df_copy.loc[index, 'Wastage (m)'] = result['total_wastage']
+            df_copy.loc[index, ['Stock Length (m)', 'Num Stock Bars', 'Wastage (m)']] = fixed_length, result['bars_used'], result['total_wastage']
         else:
-            df_copy.loc[index, 'Stock Length (m)'] = fixed_length
-            df_copy.loc[index, 'Num Stock Bars'] = 'N/A'
-            df_copy.loc[index, 'Wastage (m)'] = 'N/A'
-            
+            df_copy.loc[index, ['Stock Length (m)', 'Num Stock Bars', 'Wastage (m)']] = fixed_length, 'N/A', 'N/A'
     return df_copy
 
 def Cutlength(lengths, diameter, number_90_bends):
-    """Calculates the cut length considering bend deductions. All measurements in mm."""
     sum_lengths = sum(lengths)
     Bend_deductions = {10: 20, 12: 24, 16: 32, 18: 36, 20: 40, 25: 50, 32: 64}
     return sum_lengths - (Bend_deductions.get(diameter, 0) * number_90_bends)
 
 # --- STREAMLIT UI ---
 def bbs_generator():
-    """Renders the UI for the Bar Bending Schedule generator."""
     st.header("Bar Bending Schedule (BBS) Generator")
     with st.expander("Step 1: Add Bar Mark to Schedule", expanded=True):
         with st.form("barmark_form"):
             c1, c2 = st.columns(2)
             with c1:
-                barmark = st.text_input("Bar Mark Label", "BM01")
-                location = st.text_input("Location", "Footing 1")
-                type_rebar = st.selectbox("Rebar Type", ["D", "HD"], 1)
-                diameter = st.selectbox("Diameter (mm)", [10, 12, 16, 20, 25, 32], 1)
+                barmark, location = st.text_input("Bar Mark Label", "BM01"), st.text_input("Location", "Footing 1")
+                type_rebar, diameter = st.selectbox("Rebar Type", ["D", "HD"], 1), st.selectbox("Diameter (mm)", [10, 12, 16, 20, 25, 32], 1)
             with c2:
                 lengths_str = st.text_input("Lengths (comma-separated, in mm)", "200,1000,200")
                 bends_90 = st.number_input("Number of 90° Bends", 0, value=2)
                 preferred_length = st.selectbox("Stock Bar Length", ["Optimal", "6m", "7.5m", "9m", "12m"], 0, help="Select 'Optimal' to find the most material-efficient stock length.")
-            
             st.markdown("---")
             unit_input_method = st.radio("How to specify the number of units?", ("Directly Enter Number", "Calculate from Length and Spacing"), horizontal=True)
-            unit_number_direct = 0
             if unit_input_method == "Directly Enter Number":
                 unit_number_direct = st.number_input("Number of Units", 1, value=10)
             else:
                 c3, c4, c5 = st.columns(3)
-                total_length_m = c3.number_input("Total Length to cover (m)", value=10.0, min_value=0.1)
-                spacing_mm = c4.number_input("Spacing (mm)", value=200, min_value=1)
-                cover_mm = c5.number_input("Cover (mm)", value=75, min_value=0)
-
+                total_length_m = c3.number_input("Total Length to cover (m)", 0.1, value=10.0)
+                spacing_mm = c4.number_input("Spacing (mm)", 1, value=200)
+                cover_mm = c5.number_input("Cover (mm)", 0, value=75)
             if st.form_submit_button("➕ Add Bar to Schedule"):
-                # Check for duplicate barmarks before adding
                 if st.session_state.schedule_df_list:
-                    existing_barmarks = [item.iloc[0]['Barmark'] for item in st.session_state.schedule_df_list]
-                    if barmark in existing_barmarks:
+                    if barmark in [item.iloc[0]['Barmark'] for item in st.session_state.schedule_df_list]:
                         st.warning(f"⚠️ Warning: Bar Mark '{barmark}' already exists in the schedule.")
-
-                unit_number = 0
-                if unit_input_method == "Calculate from Length and Spacing":
-                    unit_number = numof(total_length_m * 1000, spacing_mm, cover_mm)
-                    st.info(f"Calculated Number of Bars: {unit_number}")
-                else:
-                    unit_number = unit_number_direct
-
+                unit_number = numof(total_length_m * 1000, spacing_mm, cover_mm) if unit_input_method != "Directly Enter Number" else unit_number_direct
+                if unit_input_method != "Directly Enter Number": st.info(f"Calculated Number of Bars: {unit_number}")
                 try:
-                    lengths_list = [int(l.strip()) for l in lengths_str.split(',')]
-                    new_bar_df = bm(barmark, lengths_list, type_rebar, diameter, bends_90, unit_number, location, preferred_length)
+                    new_bar_df = bm(barmark, [int(l.strip()) for l in lengths_str.split(',')], type_rebar, diameter, bends_90, unit_number, location, preferred_length)
                     if new_bar_df is not None:
                         st.session_state.schedule_df_list.append(new_bar_df)
                         st.success(f"Bar Mark '{barmark}' added!")
-                except ValueError: 
-                    st.error("Please enter valid, comma-separated numbers for lengths.")
+                except ValueError: st.error("Please enter valid, comma-separated numbers for lengths.")
 
     if st.session_state.schedule_df_list:
         with st.expander("Step 2: View Schedule, Analyze, and Download", expanded=True):
             st.subheader("Optimized Bar Bending Schedule")
             full_schedule_df = pd.concat(st.session_state.schedule_df_list, ignore_index=True)
             st.dataframe(full_schedule_df)
-            
-            # --- Delete an Entry ---
             st.markdown("---")
-            st.subheader("🗑️ Delete an Entry")
-            barmarks_to_delete = full_schedule_df['Barmark'].unique().tolist()
             
-            col1, col2 = st.columns([3, 1])
+            # --- Action Buttons ---
+            col1, col2 = st.columns(2)
             with col1:
-                selected_barmark = st.selectbox("Select Bar Mark to delete", options=barmarks_to_delete, index=None, placeholder="Choose an option")
+                pdf_bytes = create_multipage_pdf(full_schedule_df)
+                st.download_button(label="📄 Download Schedule PDF", data=pdf_bytes, file_name=f"BBS_Report_{datetime.now().strftime('%Y%m%d')}.pdf", mime="application/pdf", use_container_width=True)
             with col2:
-                st.write("") # for vertical alignment
-                if st.button("Delete Selected Entry", disabled=(not selected_barmark)):
-                    # Find the index of the dataframe to remove
-                    index_to_remove = -1
-                    for i, df_item in enumerate(st.session_state.schedule_df_list):
-                        if df_item.iloc[0]['Barmark'] == selected_barmark:
-                            index_to_remove = i
-                            break
-                    
-                    if index_to_remove != -1:
-                        st.session_state.schedule_df_list.pop(index_to_remove)
-                        st.success(f"Deleted Bar Mark '{selected_barmark}'.")
-                        st.rerun()
-                    else:
-                        st.error("Could not find the selected bar mark to delete.")
+                with st.popover("🗑️ Delete an Entry", use_container_width=True):
+                    st.write("Select a Bar Mark from the list and click delete.")
+                    barmarks_to_delete = full_schedule_df['Barmark'].unique().tolist()
+                    selected_barmark = st.selectbox("Select Bar Mark", options=barmarks_to_delete, index=None, placeholder="Choose a barmark...", key="delete_selectbox")
+                    if st.button("Confirm Deletion", disabled=(not selected_barmark), type="primary"):
+                        index_to_remove = next((i for i, df_item in enumerate(st.session_state.schedule_df_list) if df_item.iloc[0]['Barmark'] == selected_barmark), -1)
+                        if index_to_remove != -1:
+                            st.session_state.schedule_df_list.pop(index_to_remove)
+                            st.success(f"Deleted Bar Mark '{selected_barmark}'.")
+                            st.rerun()
             
-            # --- Download and Analyze ---
+            # --- Scenario Analysis ---
             st.markdown("---")
-            pdf_bytes = create_multipage_pdf(full_schedule_df)
-            st.download_button(label="📄 Download Schedule PDF", data=pdf_bytes, file_name=f"BBS_Report_{datetime.now().strftime('%Y%m%d')}.pdf", mime="application/pdf")
-            
             st.subheader("📉 Scenario Analysis")
             if st.button("Compare with 6m-Only Stock"):
                 df_6m_scenario = recalculate_with_fixed_length(full_schedule_df, 6.0)
@@ -301,34 +235,31 @@ def bbs_generator():
                 total_wastage_6m = pd.to_numeric(df_6m_scenario['Wastage (m)'], errors='coerce').sum()
                 extra_wastage = total_wastage_6m - total_wastage_optimal
                 st.write("This analysis compares your optimized schedule against one where all bars are cut from 6m stock lengths.")
-                col1, col2, col3 = st.columns(3)
-                col1.metric("Wastage with Optimal Lengths", f"{total_wastage_optimal:.2f} m")
-                col2.metric("Wastage with 6m Lengths", f"{total_wastage_6m:.2f} m", delta=f"{extra_wastage:.2f} m more waste", delta_color="inverse")
-                col3.metric("Optimization Savings", f"{extra_wastage:.2f} m", help="Meters of material saved by using optimal stock lengths instead of only 6m bars.")
+                c1, c2, c3 = st.columns(3)
+                c1.metric("Wastage with Optimal Lengths", f"{total_wastage_optimal:.2f} m")
+                c2.metric("Wastage with 6m Lengths", f"{total_wastage_6m:.2f} m", delta=f"{extra_wastage:.2f} m more waste", delta_color="inverse")
+                c3.metric("Optimization Savings", f"{extra_wastage:.2f} m", help="Meters of material saved by using optimal stock lengths instead of only 6m bars.")
                 st.write("**Recalculated Schedule (6m Stock Only)**")
                 st.dataframe(df_6m_scenario)
 
 def standalone_calculators():
-    """Renders the UI for individual calculation tools."""
     st.header("Standalone Rebar Calculators")
     st.info("This section contains individual tools for quick calculations.")
-    
     tab1, tab2 = st.tabs(["Cut Length", "Optimal Bar Size"])
     with tab1:
         st.subheader("Rebar Cut Length Calculator")
         lengths_cl_str = st.text_input("Lengths (comma-separated, in mm)", "250,1500,250", key="cl_len")
         diam_cl = st.selectbox("Diameter (mm)", [10, 12, 16, 20, 25, 32], key="cl_diam")
-        bends_cl = st.number_input("Number of 90° Bends", min_value=0, value=2, key="cl_bends")
+        bends_cl = st.number_input("Number of 90° Bends", 0, value=2, key="cl_bends")
         if st.button("Calculate Cut Length"):
             try:
-                lengths_cl = [int(l.strip()) for l in lengths_cl_str.split(',')]
-                result_cl = Cutlength(lengths_cl, diam_cl, bends_cl)
+                result_cl = Cutlength([int(l.strip()) for l in lengths_cl_str.split(',')], diam_cl, bends_cl)
                 st.metric("Final Cut Length", f"{result_cl} mm")
             except ValueError: st.error("Please enter valid, comma-separated numbers for lengths.")
     with tab2:
         st.subheader("Optimal Bar Size Calculator")
-        cut_len_opt = st.number_input("Required Cut Length (m)", value=2.8, step=0.1, min_value=0.1)
-        num_cuts_opt = st.number_input("Number of Cuts Needed", value=50, min_value=1)
+        cut_len_opt = st.number_input("Required Cut Length (m)", 0.1, value=2.8)
+        num_cuts_opt = st.number_input("Number of Cuts Needed", 1, value=50)
         if st.button("Find Optimal Size"):
             result = optimal_bar_size(cut_len_opt, num_cuts_opt)
             if 'optimal_size' in result:
@@ -337,13 +268,10 @@ def standalone_calculators():
                 st.metric("Total Wastage", f"{result['wastage']:.2f} m")
             else: st.error("Could not determine optimal size.")
 
-
 def main():
-    """Main function to run the Streamlit app."""
     st.set_page_config(page_title="Rebar Optimization Suite", layout="wide", initial_sidebar_state="expanded")
     st.title("Rebar Optimization Suite 🏗️")
-    if 'schedule_df_list' not in st.session_state: 
-        st.session_state.schedule_df_list = []
+    if 'schedule_df_list' not in st.session_state: st.session_state.schedule_df_list = []
     
     st.sidebar.title("Navigation")
     app_mode = st.sidebar.radio("Choose a Tool", ["BBS Generator", "Standalone Calculators"])
@@ -351,42 +279,25 @@ def main():
     
     st.sidebar.title("Actions")
     if st.sidebar.button("Clear Current Schedule", use_container_width=True, type="primary"):
-        if st.session_state.schedule_df_list:
-            st.session_state.show_clear_dialog = True
-        else:
-            st.toast("Schedule is already empty.")
+        if st.session_state.schedule_df_list: st.session_state.show_clear_dialog = True
+        else: st.toast("Schedule is already empty.")
     
     if st.session_state.get('show_clear_dialog', False):
         with st.dialog("Clear Schedule Confirmation"):
             st.warning("Are you sure? This will clear the current schedule.")
             full_schedule_df = pd.concat(st.session_state.schedule_df_list, ignore_index=True)
             pdf_bytes = create_multipage_pdf(full_schedule_df)
-            
             def clear_state():
-                st.session_state.schedule_df_list = []
-                st.session_state.show_clear_dialog = False
-
-            col1, col2 = st.columns(2)
-            with col1:
-                st.download_button(
-                    label="📁 Download & Clear", 
-                    data=pdf_bytes, 
-                    file_name=f"BBS_Report_{datetime.now().strftime('%Y%m%d')}.pdf", 
-                    mime="application/pdf", 
-                    on_click=clear_state, 
-                    use_container_width=True
-                )
-            with col2:
-                if st.button("⚠️ Clear without Downloading", on_click=clear_state, use_container_width=True):
-                    pass
+                st.session_state.schedule_df_list, st.session_state.show_clear_dialog = [], False
+            c1, c2 = st.columns(2)
+            c1.download_button(label="📁 Download & Clear", data=pdf_bytes, file_name=f"BBS_Report_{datetime.now().strftime('%Y%m%d')}.pdf", mime="application/pdf", on_click=clear_state, use_container_width=True)
+            c2.button("⚠️ Clear without Downloading", on_click=clear_state, use_container_width=True)
     
     st.sidebar.markdown("---")
-    st.sidebar.info(f"**Location:** Suva, Fiji\n\n**Date:** {datetime.now().strftime('%Y-%b-%Y')}")
+    st.sidebar.info(f"**Location:** Suva, Fiji\n\n**Date:** {datetime.now().strftime('%d-%b-%Y')}")
     
-    if app_mode == "BBS Generator":
-        bbs_generator()
-    else:
-        standalone_calculators()
+    if app_mode == "BBS Generator": bbs_generator()
+    else: standalone_calculators()
 
 if __name__ == "__main__":
     main()
