@@ -114,22 +114,34 @@ def p_square(length): return 4 * length
 def p_rectangle(length, width): return 2 * (length + width)
 def p_circle(diameter): return math.pi * diameter
 
-def Lapped_bars(standard_length, diameter, lapping_distance):
-    lap_length = 60 * diameter
+def Lapped_bars(standard_length, diameter, lapping_distance, factor=50):
+    """Calculates lapping requirements and returns results including the lap length."""
+    lap_length = factor * diameter
     bar_less_lap = standard_length - lap_length
-    if bar_less_lap <= 0: return "Lapping not possible. Standard length is too short.", ""
+    if bar_less_lap <= 0: 
+        return "Lapping not possible. Standard length is too short.", "", lap_length
     
     bar_by_2_span = bar_less_lap * 2 + lap_length
+    if bar_by_2_span <= 0:
+        return "Invalid parameters for lapping calculation.", "", lap_length
+
     bars_double_lap = math.floor(lapping_distance / bar_by_2_span)
     length_left = lapping_distance - bars_double_lap * bar_by_2_span
     number_of_bars = 2 * bars_double_lap
     
-    if length_left >= standard_length:
-        length_left -= standard_length
-        number_of_bars += 2
-        return f"{number_of_bars} bars used", f"{length_left} mm left at end"
-    else:
-        return f"{number_of_bars} bars used", f"{length_left} mm left after lapping"
+    # This logic assumes lapping continues until the remaining length is less than a double span.
+    # It simplifies to finding how many full lengths and one final piece are needed.
+    effective_gain_per_bar = standard_length - lap_length
+    if lapping_distance <= standard_length:
+        return f"1 bar used (no lapping needed)", f"{standard_length - lapping_distance} mm left over", 0
+
+    num_laps = math.ceil((lapping_distance - standard_length) / effective_gain_per_bar)
+    total_bars = num_laps + 1
+    final_length_used = standard_length + num_laps * effective_gain_per_bar
+    final_offcut = final_length_used - lapping_distance
+    
+    return f"{total_bars} bars required", f"{final_offcut} mm total offcut from last bar", lap_length
+
 
 def numof(length, spacing, cover):
     if spacing <= 0: return 0
@@ -340,11 +352,15 @@ def standalone_calculators():
 
     with tab5:
         st.subheader("Lapping Bar Calculator")
-        lap_len_std = st.number_input("Standard Bar Length (mm)", value=12000)
-        lap_diam = st.selectbox("Bar Diameter (mm)", [10, 12, 16, 20, 25, 32], index=2)
-        lap_dist = st.number_input("Total Distance to Span (mm)", value=30000)
+        c1, c2 = st.columns(2)
+        lap_len_std = c1.number_input("Standard Bar Length (mm)", value=12000)
+        lap_diam = c1.selectbox("Bar Diameter (mm)", [10, 12, 16, 20, 25, 32], index=2)
+        lap_dist = c2.number_input("Total Distance to Span (mm)", value=30000)
+        lap_factor = c2.number_input("Lapping Factor ($d$)", value=50)
+        
         if st.button("Calculate Lapping", key="lap_btn"):
-            num, left = Lapped_bars(lap_len_std, lap_diam, lap_dist)
+            num, left, lap_len = Lapped_bars(lap_len_std, lap_diam, lap_dist, lap_factor)
+            st.metric("Calculated Lap Length", f"{lap_len} mm")
             st.success(f"**Result:** {num}, with {left}")
 
 def main():
