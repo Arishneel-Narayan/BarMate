@@ -91,7 +91,6 @@ def create_multipage_pdf(df):
             pdf.cell(wastage_col_widths[col_name], 10, sanitize_text(row[col_name]), border=1, align='C')
         pdf.ln()
     
-    # Corrected Line: Explicitly convert bytearray from pdf.output() to bytes
     return bytes(pdf.output())
 
 
@@ -237,6 +236,12 @@ def bbs_generator():
                 cover_mm = c5.number_input("Cover (mm)", value=75, min_value=0)
 
             if st.form_submit_button("➕ Add Bar to Schedule"):
+                # Check for duplicate barmarks before adding
+                if st.session_state.schedule_df_list:
+                    existing_barmarks = [item.iloc[0]['Barmark'] for item in st.session_state.schedule_df_list]
+                    if barmark in existing_barmarks:
+                        st.warning(f"⚠️ Warning: Bar Mark '{barmark}' already exists in the schedule.")
+
                 unit_number = 0
                 if unit_input_method == "Calculate from Length and Spacing":
                     unit_number = numof(total_length_m * 1000, spacing_mm, cover_mm)
@@ -259,10 +264,36 @@ def bbs_generator():
             full_schedule_df = pd.concat(st.session_state.schedule_df_list, ignore_index=True)
             st.dataframe(full_schedule_df)
             
+            # --- Delete an Entry ---
+            st.markdown("---")
+            st.subheader("🗑️ Delete an Entry")
+            barmarks_to_delete = full_schedule_df['Barmark'].unique().tolist()
+            
+            col1, col2 = st.columns([3, 1])
+            with col1:
+                selected_barmark = st.selectbox("Select Bar Mark to delete", options=barmarks_to_delete, index=None, placeholder="Choose an option")
+            with col2:
+                st.write("") # for vertical alignment
+                if st.button("Delete Selected Entry", disabled=(not selected_barmark)):
+                    # Find the index of the dataframe to remove
+                    index_to_remove = -1
+                    for i, df_item in enumerate(st.session_state.schedule_df_list):
+                        if df_item.iloc[0]['Barmark'] == selected_barmark:
+                            index_to_remove = i
+                            break
+                    
+                    if index_to_remove != -1:
+                        st.session_state.schedule_df_list.pop(index_to_remove)
+                        st.success(f"Deleted Bar Mark '{selected_barmark}'.")
+                        st.rerun()
+                    else:
+                        st.error("Could not find the selected bar mark to delete.")
+            
+            # --- Download and Analyze ---
+            st.markdown("---")
             pdf_bytes = create_multipage_pdf(full_schedule_df)
             st.download_button(label="📄 Download Schedule PDF", data=pdf_bytes, file_name=f"BBS_Report_{datetime.now().strftime('%Y%m%d')}.pdf", mime="application/pdf")
             
-            st.markdown("---")
             st.subheader("📉 Scenario Analysis")
             if st.button("Compare with 6m-Only Stock"):
                 df_6m_scenario = recalculate_with_fixed_length(full_schedule_df, 6.0)
@@ -350,7 +381,7 @@ def main():
                     pass
     
     st.sidebar.markdown("---")
-    st.sidebar.info(f"**Location:** Suva, Fiji\n\n**Date:** {datetime.now().strftime('%d-%b-%Y')}")
+    st.sidebar.info(f"**Location:** Suva, Fiji\n\n**Date:** {datetime.now().strftime('%Y-%b-%Y')}")
     
     if app_mode == "BBS Generator":
         bbs_generator()
