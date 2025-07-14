@@ -182,13 +182,14 @@ def bbs_generator():
                 preferred_length = st.selectbox("Stock Bar Length", ["Optimal", "6m", "7.5m", "9m", "12m"], 0, help="Select 'Optimal' to find the most material-efficient stock length.")
             
             st.markdown("---")
-            unit_input_method = st.radio("How to specify quantity?", ("Directly Enter Number", "Calculate for Stirrups/Ties"), horizontal=True)
+            # --- CORRECTED UI: Using st.selectbox instead of st.radio ---
+            unit_input_method = st.selectbox(
+                "How to specify quantity?",
+                ("Directly Enter Number", "Calculate for Stirrups/Ties")
+            )
             
-            # Use variables to hold the input values
             unit_number_direct = None
-            total_length_m = None
-            spacing_mm = None
-            cover_mm = None
+            total_length_m, spacing_mm, cover_mm = None, None, None
 
             if unit_input_method == "Directly Enter Number":
                 unit_number_direct = st.number_input("Number of Units", 1, value=10)
