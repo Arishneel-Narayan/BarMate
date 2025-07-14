@@ -182,36 +182,38 @@ def bbs_generator():
                 preferred_length = st.selectbox("Stock Bar Length", ["Optimal", "6m", "7.5m", "9m", "12m"], 0, help="Select 'Optimal' to find the most material-efficient stock length.")
             
             st.markdown("---")
-            # --- CORRECTED UI: Using st.selectbox instead of st.radio ---
-            unit_input_method = st.selectbox(
-                "How to specify quantity?",
-                ("Directly Enter Number", "Calculate for Stirrups/Ties")
-            )
+            st.write("**Specify Quantity**")
             
-            unit_number_direct = None
-            total_length_m, spacing_mm, cover_mm = None, None, None
+            # --- CORRECTED UI: Both methods are always visible ---
+            # Method 1: Direct Entry (acts as an override)
+            unit_number_direct = st.number_input(
+                "Enter Number of Units Directly", 
+                min_value=0, 
+                value=0, 
+                help="If this is > 0, it will be used. Otherwise, the calculation below is used."
+            )
 
-            if unit_input_method == "Directly Enter Number":
-                unit_number_direct = st.number_input("Number of Units", 1, value=10)
-            else: # "Calculate for Stirrups/Ties"
-                st.write("Calculate quantity for repeating elements like stirrups:")
-                c3, c4, c5 = st.columns(3)
-                total_length_m = c3.number_input("Length of Zone to Cover (m)", 0.1, value=10.0)
-                spacing_mm = c4.number_input("Stirrup Spacing (c/c, mm)", 1, value=200)
-                cover_mm = c5.number_input("Concrete Cover at ends (mm)", 0, value=75)
+            st.divider()
+            
+            # Method 2: Calculation for Stirrups/Ties
+            st.write("Or, Calculate for Stirrups/Ties")
+            c3, c4, c5 = st.columns(3)
+            total_length_m = c3.number_input("Length of Zone to Cover (m)", 0.1, value=10.0)
+            spacing_mm = c4.number_input("Stirrup Spacing (c/c, mm)", 1, value=200)
+            cover_mm = c5.number_input("Concrete Cover at ends (mm)", 0, value=75)
 
             if st.form_submit_button("➕ Add Bar to Schedule"):
                 if st.session_state.schedule_df_list:
                     if barmark in [item.iloc[0]['Barmark'] for item in st.session_state.schedule_df_list]:
                         st.warning(f"⚠️ Warning: Bar Mark '{barmark}' already exists in the schedule.")
                 
-                unit_number = 0
-                if unit_input_method == "Calculate for Stirrups/Ties":
-                    unit_number = numof(total_length_m * 1000, spacing_mm, cover_mm)
-                    st.info(f"Calculated Number of Bars: {unit_number}")
-                else:
+                # Override Logic: Use direct entry if it's > 0
+                if unit_number_direct > 0:
                     unit_number = unit_number_direct
-
+                else:
+                    unit_number = numof(total_length_m * 1000, spacing_mm, cover_mm)
+                    st.info(f"Using calculated Number of Bars: {unit_number}")
+                
                 try:
                     new_bar_df = bm(barmark, [int(l.strip()) for l in lengths_str.split(',')], type_rebar, diameter, bends_90, unit_number, location, preferred_length)
                     if new_bar_df is not None:
