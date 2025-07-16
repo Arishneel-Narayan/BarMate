@@ -115,20 +115,14 @@ def p_rectangle(length, width): return 2 * (length + width)
 def p_circle(diameter): return math.pi * diameter
 
 def Lapped_bars(standard_length, diameter, lapping_distance, factor=50):
-    """Calculates lapping requirements and returns results including the lap length."""
     lap_length = factor * diameter
     effective_gain_per_bar = standard_length - lap_length
-    if effective_gain_per_bar <= 0: 
-        return "Lapping not possible. Standard length is too short for the required lap.", "", lap_length
-    
-    if lapping_distance <= standard_length:
-        return f"1 bar used (no lapping needed)", f"{standard_length - lapping_distance} mm left over", 0
-
+    if effective_gain_per_bar <= 0: return "Lapping not possible. Standard length is too short for the required lap.", "", lap_length
+    if lapping_distance <= standard_length: return f"1 bar used (no lapping needed)", f"{standard_length - lapping_distance} mm left over", 0
     num_laps_needed = math.ceil((lapping_distance - standard_length) / effective_gain_per_bar)
     total_bars = num_laps_needed + 1
     total_length_provided = standard_length + num_laps_needed * effective_gain_per_bar
     final_offcut = total_length_provided - lapping_distance
-    
     return f"{total_bars} bars required", f"{final_offcut} mm offcut from last bar", lap_length
 
 def numof(length, spacing, cover):
@@ -165,8 +159,8 @@ def optimal_bar_size(cut_length, num_cuts_needed):
             best_option = {'optimal_size': bar, 'bars_required': result['bars_used'], 'wastage': result['total_wastage']}
     return best_option
 
-def bm(Barmark, Lengths, Type, Diameter, bends_90, Unit_number, Location, Preferred_Length):
-    CutL_mm = Cutlength(Lengths, Diameter, bends_90)
+def bm(Barmark, Lengths, Type, Diameter, bends_45, bends_90, bends_135, bends_180, Unit_number, Location, Preferred_Length):
+    CutL_mm = Cutlength(Lengths, Diameter, bends_45, bends_90, bends_135, bends_180)
     CutL_m = round(CutL_mm / 1000, 3)
     if Unit_number <= 0:
         st.warning(f"Number of units for Barmark '{Barmark}' is zero or less. Skipping calculation.")
@@ -198,10 +192,17 @@ def recalculate_with_fixed_length(df, fixed_length=6.0):
             df_copy.loc[index, ['Stock Length (m)', 'Num Stock Bars', 'Wastage (m)']] = fixed_length, 'N/A', 'N/A'
     return df_copy
 
-def Cutlength(lengths, diameter, number_90_bends):
+def Cutlength(lengths, diameter, bends_45=0, bends_90=0, bends_135=0, bends_180=0):
+    """Calculates cut length considering multiple bend types."""
     sum_lengths = sum(lengths)
+    # Correlation to equivalent 90-degree bends
+    equivalent_90_bends = (bends_45 * 0.5) + (bends_90 * 1.0) + (bends_135 * 1.5) + (bends_180 * 2.0)
+    
     Bend_deductions = {10: 20, 12: 24, 16: 32, 18: 36, 20: 40, 25: 50, 32: 64}
-    return sum_lengths - (Bend_deductions.get(diameter, 0) * number_90_bends)
+    bend_deduction_val = Bend_deductions.get(diameter, 0)
+    
+    total_deduction = equivalent_90_bends * bend_deduction_val
+    return sum_lengths - total_deduction
 
 # --- STREAMLIT UI ---
 def bbs_generator():
@@ -212,10 +213,17 @@ def bbs_generator():
             with c1:
                 barmark, location = st.text_input("Bar Mark Label", "BM01"), st.text_input("Location", "Footing 1")
                 type_rebar, diameter = st.selectbox("Rebar Type", ["D", "HD"], 1), st.selectbox("Diameter (mm)", [10, 12, 16, 20, 25, 32], 1)
+                st.write("**Bend Angles**")
+                b1, b2, b3, b4 = st.columns(4)
+                bends_45_val = b1.number_input("45°", 0)
+                bends_90_val = b2.number_input("90°", 0, value=2)
+                bends_135_val = b3.number_input("135°", 0)
+                bends_180_val = b4.number_input("180°", 0)
+
             with c2:
                 lengths_str = st.text_input("Lengths (comma-separated, in mm)", "200,1000,200")
-                bends_90 = st.number_input("Number of 90° Bends", 0, value=2)
                 preferred_length = st.selectbox("Stock Bar Length", ["Optimal", "6m", "7.5m", "9m", "12m"], 0, help="Select 'Optimal' to find the most material-efficient stock length.")
+            
             st.markdown("---")
             st.write("**Specify Quantity**")
             unit_number_direct = st.number_input("Enter Number of Units Directly", 0, value=0, help="If this is > 0, it overrides the calculation below.")
@@ -225,13 +233,14 @@ def bbs_generator():
             total_length_m = c3.number_input("Length of Zone to Cover (m)", 0.1, value=10.0)
             spacing_mm = c4.number_input("Stirrup Spacing (c/c, mm)", 1, value=200)
             cover_mm = c5.number_input("Concrete Cover at ends (mm)", 0, value=75)
+
             if st.form_submit_button("➕ Add Bar to Schedule"):
                 if st.session_state.schedule_df_list and barmark in [item.iloc[0]['Barmark'] for item in st.session_state.schedule_df_list]:
                     st.warning(f"⚠️ Warning: Bar Mark '{barmark}' already exists in the schedule.")
                 unit_number = unit_number_direct if unit_number_direct > 0 else numof(total_length_m * 1000, spacing_mm, cover_mm)
                 if unit_number_direct <= 0: st.info(f"Using calculated Number of Bars: {unit_number}")
                 try:
-                    new_bar_df = bm(barmark, [int(l.strip()) for l in lengths_str.split(',')], type_rebar, diameter, bends_90, unit_number, location, preferred_length)
+                    new_bar_df = bm(barmark, [int(l.strip()) for l in lengths_str.split(',')], type_rebar, diameter, bends_45_val, bends_90_val, bends_135_val, bends_180_val, unit_number, location, preferred_length)
                     if new_bar_df is not None:
                         st.session_state.schedule_df_list.append(new_bar_df)
                         st.success(f"Bar Mark '{barmark}' added!")
@@ -282,11 +291,17 @@ def standalone_calculators():
 
     with tab1:
         st.subheader("Rebar Cut Length Calculator")
-        lengths_cl_str, diam_cl = st.text_input("Lengths (comma-separated, in mm)", "250,1500,250", key="cl_len"), st.selectbox("Diameter (mm)", [10, 12, 16, 20, 25, 32], key="cl_diam")
-        bends_cl = st.number_input("Number of 90° Bends", 0, value=2, key="cl_bends")
+        lengths_cl_str = st.text_input("Lengths (comma-separated, in mm)", "250,1500,250", key="cl_len")
+        diam_cl = st.selectbox("Diameter (mm)", [10, 12, 16, 20, 25, 32], key="cl_diam")
+        st.write("**Enter Number of Bends by Angle**")
+        b1, b2, b3, b4 = st.columns(4)
+        bends_45_cl = b1.number_input("45°", 0, key="cl_b45")
+        bends_90_cl = b2.number_input("90°", 0, value=2, key="cl_b90")
+        bends_135_cl = b3.number_input("135°", 0, key="cl_b135")
+        bends_180_cl = b4.number_input("180°", 0, key="cl_b180")
         if st.button("Calculate Cut Length", key="cl_btn"):
             try:
-                result_cl = Cutlength([int(l.strip()) for l in lengths_cl_str.split(',')], diam_cl, bends_cl)
+                result_cl = Cutlength([int(l.strip()) for l in lengths_cl_str.split(',')], diam_cl, bends_45_cl, bends_90_cl, bends_135_cl, bends_180_cl)
                 st.metric("Final Cut Length", f"{result_cl} mm")
             except ValueError: st.error("Please enter valid, comma-separated numbers for lengths.")
 
@@ -341,17 +356,14 @@ def standalone_calculators():
     with tab5:
         st.subheader("Lapping Bar Calculator")
         c1, c2 = st.columns(2)
-        # --- Corrected Input Widget ---
         lap_len_std_str = c1.selectbox("Standard Bar Length", ['6m', '7.5m', '9m', '12m'], index=3)
         lap_diam = c1.selectbox("Bar Diameter (mm)", [10, 12, 16, 20, 25, 32], index=2)
         lap_dist = c2.number_input("Total Distance to Span (mm)", value=30000)
         lap_factor = c2.number_input("Lapping Factor ($d$)", value=50)
         
         if st.button("Calculate Lapping", key="lap_btn"):
-            # Convert selected length string to mm
             length_map = {'6m': 6000, '7.5m': 7500, '9m': 9000, '12m': 12000}
             lap_len_std_mm = length_map[lap_len_std_str]
-
             num, left, lap_len = Lapped_bars(lap_len_std_mm, lap_diam, lap_dist, lap_factor)
             st.metric("Calculated Lap Length", f"{lap_len} mm")
             st.success(f"**Result:** {num}, with {left}")
